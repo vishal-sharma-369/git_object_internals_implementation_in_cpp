@@ -5,6 +5,8 @@
 #include <zlib.h>
 #include <sstream>
 #include <openssl/sha.h>
+#include <vector>
+#include <algorithm>
 
 class Error
 {
@@ -30,10 +32,14 @@ class Error
     }
 };
 
+// Handling files
 Error decompressFile(const std::string& file_path);
 std::string sha_file(std::string basicString);
 int compressFile(const std::string data, uLong *bound, unsigned char *dest) ;
 Error hash_object(std::string file);
+
+// Handling directories
+Error decompressTree(const std::string& tree_path);
 
 // ------------------------------------------------------------------------------------------------
 // Main program execution 
@@ -102,6 +108,41 @@ int main(int argc, char *argv[])
         const auto file_path = std::filesystem::current_path()/file_name;
 
         Error err = hash_object(file_path);
+        if(err.isError())
+        {
+            std::cout<<err.getMessage()<<std::endl;
+            return EXIT_FAILURE;
+        }
+    }
+    else if(command == "ls-tree")
+    {
+        std::string flag = "";
+        std::string tree_sha = "";
+        //if no argument is given
+        if(argc<=2){
+            std::cerr<<"Invalid Arguments"<< "\n";
+            return EXIT_FAILURE;
+        }
+        //if the flag is not included
+        if(argc==3){
+            tree_sha = argv[2];
+        }else{
+            tree_sha = argv[3];
+            flag = argv[2];
+        }
+
+        //if the flag is wrong
+        if(flag.size()!=0 && flag != "--name-only"){
+            std::cerr<<"Incorrect flag :"<<flag<<"\nexpected --name-only"<<"\n";
+            return EXIT_FAILURE;
+        }
+
+        const auto dir_name = tree_sha.substr(0, 2);
+        const auto file_name = tree_sha.substr(2);
+
+        std::string path = "./.git/objects/" + dir_name + "/" + file_name;
+
+        Error err = decompressTree(path);
         if(err.isError())
         {
             std::cout<<err.getMessage()<<std::endl;
@@ -223,4 +264,70 @@ std::string sha_file(std::string data)
 
     std::cout<<ss.str()<<std::endl;
     return ss.str();
+}
+
+// Handling the directories
+Error decompressTree(const std::string& tree_path)
+{
+    Error error;
+    std::ifstream file = std::ifstream(tree_path);
+
+    if(!file.is_open())
+    {
+        error.setMessage("Failed to open file: " + tree_path + "\n");
+        error.setBool(true);
+        return error;
+    }
+
+    std::string tree_data = std::string(std::istreambuf_iterator<char>(file), std::istreambuf_iterator<char>());
+
+    std::string buf;
+    buf.resize(tree_data.size());
+
+    while(true)
+    {
+        uLong buf_size = buf.size();
+        int res = uncompress(reinterpret_cast<Bytef*>(buf.data()), &buf_size, reinterpret_cast<const Bytef*> (tree_data.data()), tree_data.size());
+
+        if(res == Z_BUF_ERROR){
+            buf.resize(buf.size() * 2);
+        }
+        else if(res != Z_OK){
+            error.setMessage("Failed to decompress file, code:"+std::to_string(res)+"\n");
+            error.setBool(true);
+            return error;
+        }
+        else{
+            buf.resize(buf_size);
+            break;
+        }
+    }
+
+    std::string trimmed_data = buf.substr(buf.find('\0')+1);
+    std::string line;
+    std::vector<std::string> names;
+
+    do
+    {
+        line = trimmed_data.substr(0, trimmed_data.find('\0'));
+        if(line.substr(0, 5) == "40000")
+        {
+            names.push_back(line.substr(6));
+        }
+        else 
+        {
+            names.push_back(line.substr(7));
+        }
+        trimmed_data = trimmed_data.substr(trimmed_data.find('\0') + 21);
+    } while (trimmed_data.size() > 1);
+
+    sort(names.begin(), names.end());
+
+    for(int i = 0; i < names.size(); i++)
+    {
+        std::cout<<names[i]<<"\n";
+    }
+
+    error.setBool(false);
+    return error;
 }
