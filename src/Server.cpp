@@ -203,7 +203,7 @@ void compress_tree_format_and_write_to_objects(const std::string& tree_format, s
     compressFile(tree_format, &bound, compressedData);
 
     std::string dir = ".git/objects/" + tree_hash_hex.substr(0,2);
-    std::filesystem::create_directory(dir);
+    std::filesystem::create_directories(dir);
     std::string objectPath = dir + "/" + tree_hash_hex.substr(2);
     std::ofstream objectFile(objectPath, std::ios::binary);
     // Ensure the file stream is open before writing
@@ -417,6 +417,82 @@ std::string create_tree_format(const std::string& directory_path) {
     return tree_format_string;
 }
 
+
+
+/*
+* The function `get_current_timestamp()` generates and returns the current timestamp
+* as a formatted string. This timestamp includes the date, time, year, and timezone
+* in a format that is used in Git commit objects. The timestamp will be in
+* the format: "Day Month Date HH:MM:SS Year Timezone", e.g., "Mon Aug 26 15:45:30 2024 +0000"
+*/
+std::string get_current_timestamp()
+{
+    // Get the current time as a time_t object, representing the number of seconds since the Unix epoch (January 1, 1970).
+    std::time_t now = std::time(nullptr);
+
+    // Convert the time_t object to a local time structure (std::tm), which breaks
+    // down the time into components like year, month, day, hour, etc.
+    std::tm* local_time = std::localtime(&now);
+
+    // Create a buffer to hold the formatted timestamp string.
+    char buffer[64];
+
+    // Format the local time into a human-readable string using std::strftime,
+    // and store it in the buffer. The format used is:
+    // "%a %b %d %H:%M:%S %Y %Z" which corresponds to:
+    // - %a: Abbreviated weekday name (e.g., Mon)
+    // - %b: Abbreviated month name (e.g., Aug)
+    // - %d: Day of the month (01-31)
+    // - %H:%M:%S: Hour:Minute:Second in 24-hour format
+    // - %Y: Full year (e.g., 2024)
+    // - %z: Timezone offset from UTC (e.g., +0000)
+    std::strftime(buffer, sizeof(buffer), "%a %b %d %H:%M:%S %Y %z", local_time);
+
+    // Return the formatted timesamp as a std::string
+    return std::string(buffer);
+}
+
+/*
+* The function `create_commit_info()` generates and returns a formatted string
+* containing the author and committer information for a Git commit object.
+* The information includes the name, email, and timestamp for both the author
+* and committer, following Git's commit object format. The result is a string
+* with two lines, one for the author and one for the committer, each followed
+* by a newline character.
+*/
+std::string create_commit_info()
+{
+    // Hardcoded values for the author and committer information.
+    // In a real-world scenario, these values would typically be
+    // dynamically generated or retrieved from configuration files.
+
+    std::string author_name = "Author Name";
+    std::string author_email = "authorname@example.com";
+    std::string committer_name = "Author Name";
+    std::string committer_email = "authorname@example.com";
+
+    // Retrieve the current timestamp using the get_current_timestamp() function.
+    // This timestamp will be used for both the author and committer fields.
+    std::string timestamp = get_current_timestamp();
+
+    // Initialize a string to hold the complete commit information
+    std::string commit_info;
+
+    // Format the author information by combining the name, email, and timestamp.
+    // The format used is "author {author_name} <{author_email}> {timestamp}".
+    commit_info += "author" + author_name + " <" + author_email + "> " + timestamp + '\n';
+
+    // Format the committer information similarly, following the pattern:
+    // "committer {committer_name} <{committer_email}> {timestamp}".
+    commit_info += "committer " + committer_name  + " <" + committer_email + "> " + timestamp + '\n';
+
+    // Add an extra newline at the end to separate the commit information from the commit message.
+    commit_info += '\n';
+
+    // Return the fully formatted commit information string
+    return commit_info;
+}
+
 int main(int argc, char *argv[])
 {
     // Flush after every std::cout / std::cerr
@@ -544,6 +620,81 @@ int main(int argc, char *argv[])
         std::string tree_format = create_tree_format(directory_path);
         std::string tree_hash_hex = create_tree_hash(tree_format, true); // Get hex hash
         compress_tree_format_and_write_to_objects(tree_format, tree_hash_hex);
+    }
+    else if(command == "commit-tree")
+    {
+        /*
+        * This code block is responsible for creating a commit object in a Git-like system.
+        * A commit object is a record that includes the current state of the repository,
+        * linking it to previous states (if any), and documenting the changes made with 
+        * an associated message. The commit object is more complex than other Git objects
+        * like blobs and trees because it includes references to a parent commit (if any),
+        * author and committer information, and the commit message itself.
+        * Unlike other Git objects which are stored as a single line, the commit format
+        * contains multiple lines, with each line separated by a newline character('\n').
+        * 
+        * The commit object format is as follows:
+        * 
+        * commit {size}\0tree {tree_sha}
+        * parent {parent_sha}   // One or more lines, each starting with "parent {parent_sha}"
+        * author {author_name} <{author_email}> {author_date_seconds} {author_date_timezone}
+        * committer {committer_name} <{committer_email}> {committer_date_seconds} {committer_date_timezone}
+        * 
+        * {commit_message}  // The message describing the changes made in this commit
+        * 
+        * The commit format is not a single line of text; newlines are used to separate the
+        * different ports of the commit. This structure is necessary for Git to properly
+        * interpret and process the commit object.
+        * 
+        * IMPORTANT TO NOTE: Stirngs that are concatenated with a null byte ('\0'), then concatenated
+        * with some other text, does not mean that test is discarded. This is because  the function is using
+        * std::string rather than c-style strings, which are terminated with the null byte. The ability
+        * to include null bytes within a std::string without terminating the string or losing content is
+        * due to the fact that std::string internally tracks the size of the string independently of the 
+        * null byte. The null byte is just another character within the string, with no special 
+        * terminating role as it has in C-style strings.
+        */
+
+       // Extract the tree hash, commit message, and parent SHA from the command-line arguments.
+       std::string tree_hash = argv[2];
+       std::string commit_message = argv[argc-1];
+       std::string parent_sha = argv[argc-3];
+
+        // Create the commit information, which includes author, committer, and timestamps.
+        std::string commit_info = create_commit_info();
+
+        // Format the commit content with the required structure:
+        // - The "tree" line followed by the tree hash.
+        // - The "parent" line followed by the parent commit SHA (if applicable).
+        // - The commit info (author and committer information).
+        // - The commit message.
+        // Each of these parts is separated by a newline character ('\n').
+        std::string commit_content_format = "tree " + tree_hash + '\n' + "parent " + parent_sha + '\n' + commit_info + commit_message + '\n';
+
+        // Create the final commit object format:
+        // - The "commit" line followed by the size of the commit content.
+        // - A null byte ('\0') to separate the header from the content.
+        // - The actual commit content created above.
+
+        std::string commit_format = "commit " + std::to_string(commit_content_format.size()) + '\0' + commit_content_format;
+
+        // Generate the commit hash by creating a SHA-1 hash of the commit object format.
+        // The second argument 'true' indicates that this is the final hash (including compression, etc.).
+        std::string commit_hash = create_tree_hash(commit_format, true); // Even though the function is called create_tree_hash, functionally the commit hash is made the same way
+
+        // Write the commit hash to the .git/HEAD file, which points to the latest commit.
+        std::ofstream main_directory_path(".git/HEAD");
+        if(main_directory_path.is_open())
+        {
+            main_directory_path << commit_hash;
+            main_directory_path.close();
+        }
+
+        // Prepare to store the commit object in the .git/objects directory.
+        // The commit hash is split into two parts:
+        // - The first two characters determine the directory name.
+        // - The remaining characters are used for the file name.
+        compress_tree_format_and_write_to_objects(commit_format, commit_hash);
     }
     else {
         std::cerr << "Unknown command " << command << '\n';
